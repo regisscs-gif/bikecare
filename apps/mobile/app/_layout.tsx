@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as WebBrowser from 'expo-web-browser';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
@@ -11,6 +12,10 @@ import { colors } from '../src/theme';
 import { t } from '../src/i18n';
 import { Loading } from '../src/ui/kit';
 import { usePushRegistration } from '../src/push';
+
+// Na web o login Google abre um popup que volta para este site com o token no endereço.
+// Isso precisa rodar ANTES de qualquer redirecionamento do app (que apagaria o token) para o popup avisar a janela principal e fechar.
+WebBrowser.maybeCompleteAuthSession();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { gcTime: 1000 * 60 * 60 * 24 * 7, staleTime: 15_000, retry: 1, networkMode: 'offlineFirst' } },
