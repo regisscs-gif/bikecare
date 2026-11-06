@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "BikeCare",
+    "slug": "bikecare",
+    "scheme": "bikecare",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "app.bikecare.mobile" },
+    "android": { "package": "app.bikecare.mobile" },
+    "web": { "bundler": "metro", "output": "single" },
+    "plugins": ["expo-router", "expo-secure-store", "expo-notifications"],
+    "experiments": { "typedRoutes": false }
+  }
+}
