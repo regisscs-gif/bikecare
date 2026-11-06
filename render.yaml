@@ -1,4 +1,4 @@
-# Blueprint do Render: só a API (plano gratuito). O banco é o Supabase; as telas ficam na Cloudflare Pages.
+# Blueprint do Render: só a API (plano gratuito). O banco é o Neon; as telas ficam na Cloudflare Pages.
 services:
   - type: web
     name: bikecare-api
@@ -8,14 +8,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATABASE_URL        # Supabase → Connect → Session pooler (porta 5432)
+      - key: DATABASE_URL        # Neon → Connect → conexão direta (sem pooling)
         sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: TOKEN_ENC_KEY       # 32 bytes em base64: openssl rand -base64 32
         sync: false
-      - key: ENABLE_RLS
-        value: "true"
       - key: SEED_ON_START
         value: "true"
       - key: SEED_PUBLISH
