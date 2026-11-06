@@ -1,0 +1,9 @@
+{
+  "name": "bikecare",
+  "compatibility_date": "2026-11-01",
+  // App web estático (Expo export). Rotas internas caem no index.html (SPA).
+  "assets": {
+    "directory": "./apps/mobile/dist",
+    "not_found_handling": "single-page-application"
+  }
+}
