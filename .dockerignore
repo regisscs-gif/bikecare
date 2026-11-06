@@ -1,6 +1,7 @@
 node_modules
 **/node_modules
 .git
-apps/mobile
+apps/mobile/*
+!apps/mobile/package.json
 **/.env
 dist
