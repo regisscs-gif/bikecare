@@ -21,6 +21,8 @@ function GoogleButton() {
   const [busy, setBusy] = useState(false);
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     webClientId: ids.web, iosClientId: ids.ios, androidClientId: ids.android,
+    // Na web o redirect é sempre a raiz do site (precisa estar em "Authorized redirect URIs" do Google).
+    ...(Platform.OS === 'web' ? { redirectUri: globalThis.location?.origin } : {}),
   });
 
   useEffect(() => {
