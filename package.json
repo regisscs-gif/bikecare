@@ -2,9 +2,14 @@
   "name": "bikecare",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["packages/*", "apps/api", "apps/mobile"],
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "apps/mobile"
+  ],
   "scripts": {
     "test": "npm run test -w @bikecare/core && npm run test -w @bikecare/api",
-    "typecheck": "npm run typecheck -w @bikecare/core && npm run typecheck -w @bikecare/api && npm exec -w @bikecare/mobile -- tsc --noEmit"
+    "typecheck": "npm run typecheck -w @bikecare/core && npm run typecheck -w @bikecare/api && npm exec -w @bikecare/mobile -- tsc --noEmit",
+    "build:web": "npm run export:web -w @bikecare/mobile"
   }
 }
