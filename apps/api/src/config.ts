@@ -1,3 +1,7 @@
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
+  throw new Error('JWT_SECRET é obrigatório em produção (mínimo 32 caracteres).');
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3333),
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me-dev-secret-change-me',

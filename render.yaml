@@ -1,0 +1,34 @@
+# Blueprint do Render: API + Postgres. (O app web vai para a Cloudflare Pages, veja o README.)
+databases:
+  - name: bikecare-db
+    plan: free
+    databaseName: bikecare
+    user: bikecare
+
+services:
+  - type: web
+    name: bikecare-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: bikecare-db, property: connectionString }
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TOKEN_ENC_KEY   # 32 bytes em base64: openssl rand -base64 32
+        sync: false
+      - key: SEED_ON_START
+        value: "true"
+      - key: SEED_PUBLISH
+        value: "true"
+      - key: GOOGLE_CLIENT_IDS
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: STRAVA_CLIENT_ID
+        sync: false
+      - key: STRAVA_CLIENT_SECRET
+        sync: false
+      - key: STRAVA_WEBHOOK_VERIFY_TOKEN
+        generateValue: true
