@@ -33,9 +33,9 @@ npx expo start                            # w = web, i = iOS, a = Android
 - Cache offline do app é somente leitura (último estado carregado).
 - Mobile verificado por typecheck e `expo export --platform web`; não testado em aparelho/simulador.
 
-## Publicar (git → hospedagem)
-**API + banco (Render):** New → Blueprint → escolha este repositório (usa `render.yaml`). Preencha `GOOGLE_CLIENT_IDS`, `ADMIN_EMAILS` e `TOKEN_ENC_KEY` (`openssl rand -base64 32`). Na primeira subida, as migrações rodam e a biblioteca é carregada e publicada sozinha (`SEED_ON_START`/`SEED_PUBLISH`). Cada push na `main` faz novo deploy.
-
-**App web (Cloudflare Pages):** conecte o repositório. Root directory: `apps/mobile`. Build command: `cd ../.. && npm ci && cd apps/mobile && npx expo export --platform web`. Output directory: `dist`. Variáveis: `EXPO_PUBLIC_API_URL` (URL da API no Render) e `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`. Adicione também um arquivo `_redirects` com `/* /index.html 200` (já incluído em `apps/mobile/public`).
-
-**Google:** no client ID Web, inclua a URL do Pages em "Authorized JavaScript origins".
+## Publicar (custo zero): Supabase + Render + Cloudflare Pages
+1. **Banco (Supabase):** novo projeto → Connect → **Session pooler** (porta 5432; o Render grátis só tem IPv4, então não use a conexão direta). Copie a string e troque `[YOUR-PASSWORD]` pela senha do projeto. Em Project Settings → Data API, se possível, desative a Data API (as tabelas também ficam protegidas por RLS automaticamente: `ENABLE_RLS=true`).
+2. **API (Render):** New → Blueprint → este repositório (`render.yaml`, plano Free). Preencha `DATABASE_URL`, `TOKEN_ENC_KEY` (`openssl rand -base64 32`) e `ADMIN_EMAILS`. Na primeira subida as migrações rodam e a biblioteca é carregada e publicada.
+3. **Manter a API acordada:** o plano Free dorme após 15 min sem uso. Crie um monitor gratuito (UptimeRobot ou cron-job.org) em `https://SUA-API.onrender.com/health` a cada 5 min.
+4. **App web (Cloudflare Pages):** conecte o repositório. Root directory `apps/mobile`; build `cd ../.. && npm ci && cd apps/mobile && npx expo export --platform web`; output `dist`. Variáveis: `NODE_VERSION=22`, `EXPO_PUBLIC_API_URL` (URL da API, sem barra final), `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`.
+5. **Google:** client ID do tipo Web com a URL `.pages.dev` em "Authorized JavaScript origins"; o mesmo ID em `GOOGLE_CLIENT_IDS` (Render) e `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (Pages, depois redeploy). Adicione os e-mails de teste na tela de consentimento.

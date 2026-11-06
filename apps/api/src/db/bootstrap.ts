@@ -5,16 +5,24 @@
  */
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import pg from 'pg';
+import { createPool } from './pool';
 import { count } from 'drizzle-orm';
 import * as s from './schema';
 import { createDb } from './client';
 import { loadLibrary, seedLibrary } from './seed-lib';
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = createPool(process.env.DATABASE_URL!);
 await migrate(drizzle(pool), { migrationsFolder: new URL('../../drizzle', import.meta.url).pathname });
-await pool.end();
 console.log('Migrações aplicadas.');
+
+// Supabase expõe as tabelas do schema public por uma API REST pública (chave anon).
+// Com RLS ligado e sem políticas, essa API não enxerga nada; a nossa API conecta como dono do banco e não é afetada.
+if (process.env.ENABLE_RLS === 'true') {
+  const { rows } = await pool.query("select tablename from pg_tables where schemaname = 'public'");
+  for (const r of rows) await pool.query(`alter table "public"."${r.tablename}" enable row level security`);
+  console.log(`RLS ativado em ${rows.length} tabelas.`);
+}
+await pool.end();
 
 if (process.env.SEED_ON_START === 'true') {
   const db = createDb();
