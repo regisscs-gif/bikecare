@@ -1,13 +1,14 @@
 import type { AppDeps } from './app';
 import * as s from './db/schema';
 import { refreshUser } from './services/notify';
-import { processJobs } from './strava/sync';
+import { processJobs, scheduleSyncs } from './strava/sync';
 
 /**
  * Rotina horária: recalcula todos os usuários (regras por tempo vencem mesmo sem pedalar, ex.: selante)
  * e envia push que ficaram retidos pelo horário silencioso ou limite diário.
  */
 export async function hourlyJob(deps: AppDeps) {
+  await scheduleSyncs(deps).catch((e) => console.error('scheduleSyncs', e));
   const users = await deps.db.select({ id: s.users.id }).from(s.users);
   let created = 0;
   for (const u of users) {

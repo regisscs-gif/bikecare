@@ -8,6 +8,13 @@
       "when": 1793147049227,
       "tag": "0000_narrow_raider",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794266967908,
+      "tag": "0001_wet_kulan_gath",
+      "breakpoints": true
     }
   ]
 }

@@ -13,7 +13,7 @@ export default function StravaCallback() {
   useEffect(() => {
     if (!code || err) return;
     post('/strava/connect', { code, scope: scope ?? '' })
-      .then(() => router.replace('/account'))
+      .then(() => router.replace('/onboarding/strava'))
       .catch(setErr);
   }, [code, scope, err, router]);
 

@@ -1,12 +1,13 @@
-import { and, eq, inArray, lte, max, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, lte, max, or, sql } from 'drizzle-orm';
 import { computePartWear } from '@bikecare/core';
 import type { AppDeps } from '../app';
+import { config } from '../config';
 import * as s from '../db/schema';
 import { badRequest, HttpError } from '../http';
 import { createBike } from '../services/bikes';
 import { installedOn, loadUserContext, partInput } from '../services/context';
 import { refreshUser } from '../services/notify';
-import { realStravaClient, StravaRateLimited, StravaUnauthorized, type StravaActivity, type StravaClient } from './client';
+import { realStravaClient, StravaRateLimited, StravaUnauthorized, type StravaActivity, type StravaClient, type StravaCreds } from './client';
 import { decryptToken, encryptToken } from './crypto';
 import { DEFAULT_ACTIVITY_TYPES, mapStravaActivity } from './mapping';
 
@@ -17,6 +18,23 @@ export async function acceptedTypes(deps: AppDeps): Promise<string[]> {
   return Array.isArray(row?.value) && row.value.length ? (row.value as string[]) : DEFAULT_ACTIVITY_TYPES;
 }
 
+/**
+ * Credenciais do app do Strava para este usuário: o app dele (se cadastrou) ou o app global do servidor.
+ * `own` indica qual foi usado; null = nada configurado.
+ */
+export async function resolveCreds(deps: AppDeps, userId: string): Promise<(StravaCreds & { own: boolean }) | null> {
+  const [row] = await deps.db.select().from(s.stravaCredentials).where(eq(s.stravaCredentials.userId, userId));
+  if (row) return { clientId: row.clientId, clientSecret: decryptToken(row.clientSecretEnc), own: true };
+  if (config.strava.clientId && config.strava.clientSecret) return { clientId: config.strava.clientId, clientSecret: config.strava.clientSecret, own: false };
+  return null;
+}
+
+async function requireCreds(deps: AppDeps, userId: string) {
+  const c = await resolveCreds(deps, userId);
+  if (!c) throw new HttpError(409, 'STRAVA_NOT_CONFIGURED', 'Informe as credenciais do seu app do Strava para conectar.');
+  return c;
+}
+
 /** Token válido; renova se faltar menos de 1 minuto. Falha de autorização marca a conexão e avisa o usuário. */
 export async function accessToken(deps: AppDeps, userId: string): Promise<string> {
   const { db } = deps;
@@ -24,7 +42,7 @@ export async function accessToken(deps: AppDeps, userId: string): Promise<string
   if (!conn || conn.status === 'REVOKED') throw new HttpError(409, 'STRAVA_NOT_CONNECTED', 'Strava não conectado.');
   if (conn.expiresAt.getTime() - deps.now().getTime() > 60_000) return decryptToken(conn.accessTokenEnc);
   try {
-    const t = await client(deps).refresh(decryptToken(conn.refreshTokenEnc));
+    const t = await client(deps).refresh(decryptToken(conn.refreshTokenEnc), await requireCreds(deps, userId));
     await db.update(s.stravaConnections).set({
       accessTokenEnc: encryptToken(t.accessToken), refreshTokenEnc: encryptToken(t.refreshToken), expiresAt: t.expiresAt, status: 'OK',
     }).where(eq(s.stravaConnections.userId, userId));
@@ -50,7 +68,7 @@ export async function markStravaError(deps: AppDeps, userId: string) {
 export async function connectStrava(deps: AppDeps, userId: string, code: string, scope: string) {
   const { db } = deps;
   if (!scope.includes('activity:read')) throw badRequest('É preciso autorizar a leitura de atividades.', 'STRAVA_SCOPE');
-  const t = await client(deps).exchangeCode(code);
+  const t = await client(deps).exchangeCode(code, await requireCreds(deps, userId));
   const [taken] = await db.select().from(s.stravaConnections).where(eq(s.stravaConnections.athleteId, t.athleteId));
   if (taken && taken.userId !== userId) throw new HttpError(409, 'STRAVA_ATHLETE_TAKEN', 'Esta conta do Strava já está ligada a outro usuário.');
   const values = {
@@ -102,7 +120,7 @@ export async function linkGear(deps: AppDeps, userId: string, bikeId: string, ge
 
 // ───────── Fila com nova tentativa ─────────
 
-export async function enqueue(deps: AppDeps, userId: string, job: { kind: 'INITIAL' | 'ACTIVITY'; objectId?: string; aspect?: string; updates?: unknown }) {
+export async function enqueue(deps: AppDeps, userId: string, job: { kind: 'INITIAL' | 'SYNC' | 'ACTIVITY'; objectId?: string; aspect?: string; updates?: unknown }) {
   const [row] = await deps.db.insert(s.stravaJobs).values({
     userId, kind: job.kind, objectId: job.objectId ?? null, aspect: job.aspect ?? null, updates: (job.updates ?? null) as never, nextAttemptAt: deps.now(),
   }).returning({ id: s.stravaJobs.id });
@@ -119,6 +137,7 @@ export async function processJobs(deps: AppDeps, limit = 25): Promise<{ done: nu
   for (const job of due) {
     try {
       if (job.kind === 'INITIAL') await initialImport(deps, job.userId);
+      else if (job.kind === 'SYNC') await initialImport(deps, job.userId, { incremental: true });
       else await applyActivityEvent(deps, job.userId, { id: job.objectId!, aspect: job.aspect as string, updates: (job.updates ?? {}) as Record<string, unknown> });
       await db.update(s.stravaJobs).set({ status: 'DONE', lastError: null }).where(eq(s.stravaJobs.id, job.id));
       await db.update(s.stravaConnections).set({ lastSyncAt: deps.now() }).where(eq(s.stravaConnections.userId, job.userId));
@@ -145,6 +164,25 @@ export async function processJobs(deps: AppDeps, limit = 25): Promise<{ done: nu
   return out;
 }
 
+/**
+ * Sincronização periódica (rede de segurança do webhook, e único caminho para quem usa o próprio app do Strava,
+ * já que o webhook é por aplicativo). Enfileira uma sincronização incremental para quem não sincronizou na última hora.
+ * Atividades apagadas no Strava só somem em eventos de webhook ou numa reconexão.
+ */
+export async function scheduleSyncs(deps: AppDeps, olderThanMs = 55 * 60_000): Promise<number> {
+  const { db } = deps;
+  const cutoff = new Date(deps.now().getTime() - olderThanMs);
+  const conns = await db.select().from(s.stravaConnections).where(and(eq(s.stravaConnections.status, 'OK'), or(isNull(s.stravaConnections.lastSyncAt), lt(s.stravaConnections.lastSyncAt, cutoff))));
+  let n = 0;
+  for (const c of conns) {
+    const pending = await db.select({ id: s.stravaJobs.id }).from(s.stravaJobs).where(and(eq(s.stravaJobs.userId, c.userId), eq(s.stravaJobs.status, 'PENDING')));
+    if (pending.length) continue;
+    await enqueue(deps, c.userId, { kind: 'SYNC' });
+    n++;
+  }
+  return n;
+}
+
 async function gearMap(deps: AppDeps, userId: string) {
   const bikes = await deps.db.select().from(s.bikes).where(and(eq(s.bikes.userId, userId), eq(s.bikes.status, 'ACTIVE')));
   return {
@@ -155,7 +193,7 @@ async function gearMap(deps: AppDeps, userId: string) {
 }
 
 /** Importação inicial: atividades desde a data de instalação mais antiga entre as peças das bikes vinculadas (e depois do último consolidado). */
-export async function initialImport(deps: AppDeps, userId: string) {
+export async function initialImport(deps: AppDeps, userId: string, opts: { incremental?: boolean } = {}) {
   const { db } = deps;
   const token = await accessToken(deps, userId);
   const types = await acceptedTypes(deps);
@@ -167,6 +205,11 @@ export async function initialImport(deps: AppDeps, userId: string) {
   const [{ at } = { at: null }] = await db.select({ at: max(s.partRules.consolidatedAt) }).from(s.partRules)
     .where(inArray(s.partRules.partId, ctx.parts.map((p) => p.id).concat('none')));
   if (at && at.getTime() > after) after = at.getTime();
+  if (opts.incremental) {
+    // Sincronização periódica: só o que mudou desde a última vez, com 2 dias de folga para edições recentes.
+    const [conn] = await db.select().from(s.stravaConnections).where(eq(s.stravaConnections.userId, userId));
+    if (conn?.lastSyncAt) after = Math.max(after, conn.lastSyncAt.getTime() - 2 * 86_400_000);
+  }
 
   let imported = 0;
   for (let page = 1; page <= 50; page++) {

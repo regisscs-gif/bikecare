@@ -67,6 +67,14 @@ export const stravaConnections = pgTable('strava_connections', {
   lastSyncAt: ts('last_sync_at'),
 });
 
+/** App do Strava do próprio usuário (modo "cada um com o seu app"). O segredo fica criptografado. */
+export const stravaCredentials = pgTable('strava_credentials', {
+  userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  clientId: text('client_id').notNull(),
+  clientSecretEnc: text('client_secret_enc').notNull(),
+  createdAt: now('created_at'),
+});
+
 export const pushTokens = pgTable('push_tokens', {
   id: id(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -386,7 +394,7 @@ export const appSettings = pgTable('app_settings', {
 export const stravaJobs = pgTable('strava_jobs', {
   id: id(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  kind: text('kind').notNull(), // INITIAL | ACTIVITY
+  kind: text('kind').notNull(), // INITIAL | SYNC | ACTIVITY
   objectId: text('object_id'),
   aspect: text('aspect'), // create | update | delete
   updates: jsonb('updates'),

@@ -1,5 +1,6 @@
-import { config } from '../config';
 
+/** Credenciais do app do Strava usadas na troca de código e na renovação de tokens. */
+export interface StravaCreds { clientId: string; clientSecret: string }
 export interface StravaTokens { accessToken: string; refreshToken: string; expiresAt: Date; athleteId: string; scope?: string }
 export interface StravaGear { id: string; name: string; primary: boolean; brand?: string | null; model?: string | null }
 export interface StravaActivity {
@@ -23,8 +24,8 @@ export class StravaUnauthorized extends Error {
 
 /** Fronteira com a API do Strava. Integração direta, sem plataformas intermediárias (condição do Strava). */
 export interface StravaClient {
-  exchangeCode(code: string): Promise<StravaTokens>;
-  refresh(refreshToken: string): Promise<StravaTokens>;
+  exchangeCode(code: string, creds: StravaCreds): Promise<StravaTokens>;
+  refresh(refreshToken: string, creds: StravaCreds): Promise<StravaTokens>;
   deauthorize(accessToken: string): Promise<void>;
   getGear(accessToken: string): Promise<StravaGear[]>;
   listActivities(accessToken: string, afterEpoch: number, page: number): Promise<StravaActivity[]>;
@@ -45,18 +46,18 @@ const tokens = (j: any): StravaTokens => ({
 });
 
 export const realStravaClient: StravaClient = {
-  async exchangeCode(code) {
+  async exchangeCode(code, creds) {
     const res = await call(`${BASE}/oauth/token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: config.strava.clientId, client_secret: config.strava.clientSecret, code, grant_type: 'authorization_code' }),
+      body: JSON.stringify({ client_id: creds.clientId, client_secret: creds.clientSecret, code, grant_type: 'authorization_code' }),
     });
     if (!res.ok) throw new StravaUnauthorized();
     return tokens(await res.json());
   },
-  async refresh(refreshToken) {
+  async refresh(refreshToken, creds) {
     const res = await call(`${BASE}/oauth/token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: config.strava.clientId, client_secret: config.strava.clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
+      body: JSON.stringify({ client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
     });
     if (!res.ok) throw new StravaUnauthorized();
     const j = await res.json();

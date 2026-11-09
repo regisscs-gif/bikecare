@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { post } from '../../src/api/client';
 import { RefreshControl, ScrollView, View, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useHome } from '../../src/api/hooks';
@@ -13,6 +15,16 @@ export default function Home() {
   const { me } = useAuth();
   const q = useHome();
   const data = q.data;
+  const qc = useQueryClient();
+  const stravaOn = !!me?.strava?.connected;
+
+  // Ao abrir o app, pede uma sincronização do Strava (o servidor ignora se já sincronizou há pouco).
+  useEffect(() => {
+    if (!stravaOn) return;
+    post('/strava/sync').then((r: { queued?: boolean }) => {
+      if (r?.queued) setTimeout(() => { void qc.invalidateQueries(); }, 5000);
+    }).catch(() => undefined);
+  }, [stravaOn, qc]);
 
   return (
     <Screen scroll={false} pad={false}>

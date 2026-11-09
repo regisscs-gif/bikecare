@@ -25,7 +25,12 @@ npx expo start                            # w = web, i = iOS, a = Android
 - Strava: app em strava.com/settings/api; o domínio/redirect `.../strava/callback` precisa estar autorizado. Segredo só no servidor. Para mais de 1 atleta, pedir Extended Access.
 - Push: Expo Push (requer `projectId` do EAS para builds nativos).
 
+## Strava: dois modos
+- **App do próprio usuário (padrão hoje):** em Conta → Strava, cada pessoa cria um app gratuito em strava.com/settings/api (callback domain = domínio do app) e cola Client ID e Client Secret. Cada app tem 1 atleta (o dono), então não precisa de Extended Access. O segredo fica criptografado no servidor (`TOKEN_ENC_KEY`) e nunca volta ao app. Sem webhook (ele é por aplicativo): a API sincroniza de hora em hora, ao abrir o app e em "Sincronizar agora". Atividades apagadas no Strava só somem ao reconectar.
+- **App global (opcional):** `STRAVA_CLIENT_ID` e `STRAVA_CLIENT_SECRET` no servidor; usado por quem não cadastrou app próprio. Com ele há webhook em tempo real, mas só depois do Extended Access para mais de 1 atleta.
+
 ## Pendências conhecidas
+- **Strava Extended Access** (pedir ao Strava para liberar mais de 1 atleta no app global; exige política de privacidade e termos publicados). Tratar depois.
 - Painel admin: só a API (`/v1/admin/*`, RBAC, auditoria, importação CSV). Falta a interface web.
 - Textos de Termos/Privacidade e metas das métricas de sucesso.
 - Login Apple (fase 1.1).

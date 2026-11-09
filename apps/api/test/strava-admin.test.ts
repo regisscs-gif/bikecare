@@ -6,6 +6,7 @@ import { StravaRateLimited, type StravaActivity } from '../src/strava/client';
 import { mapStravaActivity } from '../src/strava/mapping';
 import { decryptToken, encryptToken } from '../src/strava/crypto';
 import { hourlyJob } from '../src/jobs';
+import { config } from '../src/config';
 import { makeHarness, type Harness } from './harness';
 
 let h: Harness;
@@ -144,7 +145,7 @@ describe('integração Strava (fluxo completo)', () => {
     // token expirado + refresh recusado => aviso de reconexão
     h.strava.revoked = true;
     await h.db.update(s.stravaConnections).set({ expiresAt: new Date(0) }).where(eq(s.stravaConnections.userId, u.id));
-    await h.call('POST', '/strava/sync', u.token);
+    await h.call('POST', '/strava/sync', u.token, { force: true });
     await new Promise((r) => setTimeout(r, 20));
     await processJobs(h.app.deps);
     h.strava.revoked = false;
@@ -356,5 +357,92 @@ describe('painel administrativo e reprocessamento', () => {
     expect((await h.call('GET', '/me', u.token)).body.entitlements.maxActiveBikes).toBe(2);
     expect((await h.call('PUT', '/admin/settings/strava.activityTypes', adm.token, { value: ['Ride', 'GravelRide'] })).status).toBe(200);
     expect((await h.call('GET', '/admin/strava/health', sup.token)).status).toBe(200);
+  });
+});
+
+
+describe('Strava com credenciais do próprio usuário', () => {
+  const SECRET = 'a'.repeat(40);
+
+  it('valida, guarda o segredo criptografado, nunca o devolve e usa o app do usuário na conexão, na URL e na renovação', async () => {
+    const u = await newUser('own1@bike.test');
+    h.strava.athleteId = '701';
+    h.strava.gear = [{ id: 'g1', name: 'Minha', primary: true }];
+
+    expect((await h.call('PUT', '/strava/credentials', u.token, { clientId: 'abc', clientSecret: SECRET })).status).toBe(400);
+    expect((await h.call('PUT', '/strava/credentials', u.token, { clientId: '255143', clientSecret: 'curto' })).status).toBe(400);
+    expect((await h.call('PUT', '/strava/credentials', u.token, { clientId: '255143', clientSecret: SECRET })).status).toBe(200);
+
+    const st = (await h.call('GET', '/strava/status', u.token)).body;
+    expect(st).toMatchObject({ configured: true, ownCredentials: { clientId: '255143' } });
+    expect(JSON.stringify(st)).not.toContain(SECRET);
+    const [row] = await h.db.select().from(s.stravaCredentials).where(eq(s.stravaCredentials.userId, u.id));
+    expect(row!.clientSecretEnc).not.toContain(SECRET);
+    expect(decryptToken(row!.clientSecretEnc)).toBe(SECRET);
+
+    const auth = (await h.call('GET', '/strava/auth-url?redirectUri=https%3A%2F%2Fapp.test%2Fstrava%2Fcallback', u.token)).body;
+    expect(auth.webUrl).toContain('client_id=255143');
+
+    h.strava.credsUsed.length = 0;
+    expect((await h.call('POST', '/strava/connect', u.token, { code: 'abcdef', scope: 'read,activity:read_all' })).status).toBe(200);
+    expect(h.strava.credsUsed).toContainEqual({ op: 'exchange', clientId: '255143' });
+
+    // trocar credenciais com o Strava conectado não é permitido
+    expect((await h.call('PUT', '/strava/credentials', u.token, { clientId: '999999', clientSecret: SECRET })).status).toBe(409);
+    expect((await h.call('DELETE', '/strava/credentials', u.token)).status).toBe(409);
+
+    // renovação de token usa o app do usuário
+    await h.db.update(s.stravaConnections).set({ expiresAt: new Date(0) }).where(eq(s.stravaConnections.userId, u.id));
+    expect((await h.call('GET', '/strava/gear', u.token)).status).toBe(200);
+    expect(h.strava.credsUsed).toContainEqual({ op: 'refresh', clientId: '255143' });
+
+    // desconectar libera a troca/remoção; sem credenciais próprias volta ao app global
+    expect((await h.call('DELETE', '/strava', u.token)).status).toBe(204);
+    expect((await h.call('DELETE', '/strava/credentials', u.token)).status).toBe(204);
+    expect((await h.call('GET', '/strava/status', u.token)).body).toMatchObject({ ownCredentials: null, configured: true });
+  });
+
+  it('sem credenciais próprias e sem app global, conectar pede as credenciais', async () => {
+    const u = await newUser('own2@bike.test');
+    const saved = { id: config.strava.clientId, secret: config.strava.clientSecret };
+    config.strava.clientId = ''; config.strava.clientSecret = '';
+    try {
+      expect((await h.call('GET', '/strava/status', u.token)).body.configured).toBe(false);
+      const r = await h.call('POST', '/strava/connect', u.token, { code: 'abcdef', scope: 'read,activity:read_all' });
+      expect(r.status).toBe(409);
+      expect(r.body.code).toBe('STRAVA_NOT_CONFIGURED');
+      expect((await h.call('GET', '/strava/auth-url?redirectUri=https%3A%2F%2Fapp.test%2Fx', u.token)).status).toBe(409);
+    } finally {
+      config.strava.clientId = saved.id; config.strava.clientSecret = saved.secret;
+    }
+  });
+
+  it('sincronização periódica: a rotina horária enfileira, só importa o que é novo e não duplica', async () => {
+    const u = await newUser('own3@bike.test');
+    h.strava.athleteId = '703';
+    h.strava.gear = [{ id: 'g1', name: 'Sync', primary: true }];
+    await h.call('PUT', '/strava/credentials', u.token, { clientId: '255143', clientSecret: SECRET });
+    await h.call('POST', '/strava/connect', u.token, { code: 'abcdef', scope: 'read,activity:read_all' });
+    h.strava.activities = [act(501, { gear_id: 'g1', start_date: '2026-10-20T10:00:00Z', distance: 30_000 })];
+    const id = (await h.call('POST', '/strava/import', u.token, { picks: [{ gearId: 'g1', type: 'ROAD', partsInstalledAt: '2026-10-01' }] })).body.created[0];
+    await new Promise((r) => setTimeout(r, 30));
+    await processJobs(h.app.deps);
+    const km = async () => (await h.call('GET', `/bikes/${id}/activities`, u.token)).body.reduce((a: number, x: any) => a + x.km, 0);
+    expect(await km()).toBe(30);
+
+    // nova atividade no Strava; sem webhook, só a rotina horária a encontra
+    h.strava.activities.push(act(502, { gear_id: 'g1', start_date: '2026-10-27T09:00:00Z', distance: 20_000 }));
+    h.clock.now = new Date(h.clock.now.getTime() + 2 * 3600_000);
+    await hourlyJob(h.app.deps);
+    const jobs = await h.db.select().from(s.stravaJobs).where(eq(s.stravaJobs.userId, u.id));
+    expect(jobs.filter((j) => j.kind === 'SYNC' && j.status === 'PENDING')).toHaveLength(1);
+    await hourlyJob(h.app.deps); // não enfileira de novo enquanto há um pendente
+    expect((await h.db.select().from(s.stravaJobs).where(eq(s.stravaJobs.userId, u.id))).filter((j) => j.kind === 'SYNC')).toHaveLength(1);
+    await processJobs(h.app.deps);
+    expect(await km()).toBe(50);
+
+    // pedido manual logo depois é ignorado (limite de 2 min), com force não
+    expect((await h.call('POST', '/strava/sync', u.token)).body.queued).toBe(false);
+    expect((await h.call('POST', '/strava/sync', u.token, { force: true })).body.queued).toBe(true);
   });
 });

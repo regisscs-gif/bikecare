@@ -12,10 +12,13 @@ export class FakeStrava implements StravaClient {
   athleteId = '9001';
   revoked = false;
   deauthorized = 0;
-  async exchangeCode() {
+  credsUsed: Array<{ op: string; clientId: string }> = [];
+  async exchangeCode(_code?: string, creds?: { clientId: string }) {
+    this.credsUsed.push({ op: 'exchange', clientId: creds?.clientId ?? '' });
     return { accessToken: 'acc', refreshToken: 'ref', expiresAt: new Date(Date.now() + 3600_000), athleteId: this.athleteId };
   }
-  async refresh() {
+  async refresh(_rt?: string, creds?: { clientId: string }) {
+    this.credsUsed.push({ op: 'refresh', clientId: creds?.clientId ?? '' });
     if (this.revoked) throw new StravaUnauthorized();
     return { accessToken: 'acc2', refreshToken: 'ref2', expiresAt: new Date(Date.now() + 3600_000), athleteId: '' };
   }
@@ -33,6 +36,8 @@ export async function makeHarness() {
   const { config } = await import('../src/config');
   config.tokenEncKey = Buffer.alloc(32, 7).toString('base64');
   config.strava.webhookVerifyToken = 'verify-me';
+  config.strava.clientId = 'global-id';
+  config.strava.clientSecret = 'global-secret';
 
   const { db } = await makeTestDb();
   const clock = { now: new Date(NOON_SP) };

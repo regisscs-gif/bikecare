@@ -1,21 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
-import { del, get, patch, post } from '../../src/api/client';
+import { del, patch } from '../../src/api/client';
 import { useWrite } from '../../src/api/hooks';
 import { useAuth } from '../../src/auth/AuthProvider';
 import { Button, Card, ErrorBox, Field, H2, P, Screen, Section, Segmented, Toggle } from '../../src/ui/kit';
 import { confirm, notify } from '../../src/ui/dialogs';
-import { startStravaConnect } from '../../src/strava';
+import { StravaCard } from '../../src/ui/StravaCard';
 import { exportMyData } from '../../src/exportData';
-import { dateTimeBR } from '../../src/util/format';
-import { t, type TKey } from '../../src/i18n';
+import { t } from '../../src/i18n';
 
 export default function Account() {
   const { me, reloadMe, logout } = useAuth();
   const router = useRouter();
-  const strava = useQuery({ queryKey: ['strava-status'], queryFn: () => get<{ connected: boolean; status: string | null; lastSyncAt: string | null; configured: boolean }>('/strava/status') });
 
   const [y, setY] = useState(''); const [o, setO] = useState(''); const [r, setR] = useState('');
   const [thErr, setThErr] = useState<string | null>(null);
@@ -25,20 +22,9 @@ export default function Account() {
 
   const savePrefs = useWrite((body: any) => patch('/me', body));
   const saveThresholds = useWrite(() => patch('/me', { thresholds: { yellow: Number(y), orange: Number(o), red: Number(r) } }));
-  const [stravaErr, setStravaErr] = useState<unknown>(null);
-  const [stravaBusy, setStravaBusy] = useState(false);
-
   if (!me) return null;
   const apply = (body: any) => savePrefs.mutate(body, { onSuccess: () => { void reloadMe(); } });
 
-  async function connect() {
-    setStravaBusy(true); setStravaErr(null);
-    try { const r = await startStravaConnect(); if (r.done) { await strava.refetch(); router.push('/onboarding/strava'); } } catch (e) { setStravaErr(e); } finally { setStravaBusy(false); }
-  }
-  async function disconnect() {
-    if (!(await confirm(t('strava.disconnect'), t('strava.disconnectConfirm'), t('strava.disconnect'), true))) return;
-    try { await del('/strava'); await strava.refetch(); await reloadMe(); } catch (e) { setStravaErr(e); }
-  }
   function submitThresholds() {
     setThErr(null);
     const [a, b, c] = [Number(y), Number(o), Number(r)];
@@ -46,7 +32,6 @@ export default function Account() {
     saveThresholds.mutate(undefined, { onSuccess: () => { void reloadMe(); } });
   }
 
-  const sc = strava.data;
   return (
     <Screen>
       <Card>
@@ -55,24 +40,7 @@ export default function Account() {
       </Card>
 
       <Section title="Strava">
-        <Card>
-          <P>{sc?.connected ? t(`strava.status.${sc.status === 'ERROR' ? 'ERROR' : 'OK'}` as TKey) : t('strava.notConnected')}</P>
-          {sc?.connected && sc.lastSyncAt ? <P muted small>{t('strava.lastSync', { when: dateTimeBR(sc.lastSyncAt) })}</P> : null}
-          {stravaErr ? <ErrorBox error={stravaErr} /> : null}
-          {sc?.connected ? (
-            <>
-              <Button kind="secondary" small title="Sincronizar agora" onPress={() => post('/strava/sync').then(() => notify('Sincronização iniciada')).catch(setStravaErr)} />
-              {sc.status === 'ERROR' ? <Button small title={t('strava.connect')} onPress={connect} loading={stravaBusy} /> : null}
-              <Button kind="danger" small title={t('strava.disconnect')} onPress={disconnect} />
-            </>
-          ) : (
-            <>
-              <Button title={t('strava.connect')} onPress={connect} loading={stravaBusy} disabled={sc ? !sc.configured : false} />
-              {sc && !sc.configured ? <P muted small>{t('strava.notConfigured')}</P> : null}
-            </>
-          )}
-          <P muted small>{t('strava.powered')}</P>
-        </Card>
+        <StravaCard onConnected={() => router.push('/onboarding/strava')} />
       </Section>
 
       <Section title={t('account.preferences')}>
