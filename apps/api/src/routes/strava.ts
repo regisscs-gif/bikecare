@@ -6,7 +6,8 @@ import * as s from '../db/schema';
 import { BIKE_TYPES } from '../db/bike-templates';
 import { HttpError, parse } from '../http';
 import { getOwnedBike } from '../services/parts';
-import { connectStrava, disconnectStrava, enqueue, importGear, linkGear, listGear, processJobs, resolveCreds } from '../strava/sync';
+import { connectStrava, disconnectStrava, enqueue, importGear, linkGear, listGear, resolveCreds } from '../strava/sync';
+import { runJobs } from '../jobs';
 import { encryptToken } from '../strava/crypto';
 
 
@@ -38,7 +39,7 @@ async function publicRoutes(api: FastifyInstance) {
       } else {
         await enqueue(api.deps, conn.userId, { kind: 'ACTIVITY', objectId: String(ev.object_id), aspect: ev.aspect_type, updates: ev.updates ?? {} });
         // O Strava exige resposta rápida; processa depois de responder.
-        setImmediate(() => { processJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
+        setImmediate(() => { runJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
       }
     }
     return reply.status(200).send({ ok: true });
@@ -108,7 +109,7 @@ function privateRoutes(api: FastifyInstance) {
       picks: z.array(z.object({ gearId: z.string(), type: z.enum(BIKE_TYPES as [string, ...string[]]), partsInstalledAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish() })).min(1),
     }), req.body);
     const out = await importGear(api.deps, req.userId, picks);
-    setImmediate(() => { processJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
+    setImmediate(() => { runJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
     return out;
   });
 
@@ -117,7 +118,7 @@ function privateRoutes(api: FastifyInstance) {
     const { gearId } = parse(z.object({ gearId: z.string() }), req.body);
     await getOwnedBike(db, req.userId, id);
     await linkGear(api.deps, req.userId, id, gearId);
-    setImmediate(() => { processJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
+    setImmediate(() => { runJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
     return { ok: true };
   });
 
@@ -128,7 +129,7 @@ function privateRoutes(api: FastifyInstance) {
     if (!c || c.status === 'REVOKED') throw new HttpError(409, 'STRAVA_NOT_CONNECTED', 'Strava não conectado.');
     if (!force && c.lastSyncAt && api.deps.now().getTime() - c.lastSyncAt.getTime() < 2 * 60_000) return { queued: false };
     await enqueue(api.deps, req.userId, { kind: c.lastSyncAt ? 'SYNC' : 'INITIAL' });
-    setImmediate(() => { processJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
+    setImmediate(() => { runJobs(api.deps).catch((e) => console.error('strava jobs', e)); });
     return { queued: true };
   });
 
